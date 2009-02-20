@@ -1,0 +1,83 @@
+nginx_auth_mysql
+----------------
+
+nginx_auth_mysql allows you to do basic authentication against
+a MySQL database.
+
+== Installation ==
+
+To install, compile nginx with the following option:
+
+  --add-module=/path/to/nginx_auth_mysql
+  
+If mysqlclient or any of the other libraries are in non-standard locations,
+you can add them to CORE_LIBS in the `config` file. Also you may need to
+add CORE_INCS for include files. Here is how these two lines look in order
+to compile it on Mac OS X using mysqlclient from darwinports:
+
+CORE_LIBS="$CORE_LIBS -lcrypto -lmysqlclient -L/opt/local/lib/mysql5/mysql/"
+CORE_INCS="$CORE_INCS /opt/local/include/mysql5/mysql/"
+
+Note: every time you change the `config` file, you have to run the ./configure
+magic line again.
+  
+== Configuration ==
+  
+It is activated by adding several configuration options:
+
+- auth_mysql_realm: HTTP basic authentiaction realm. Required.
+- auth_mysql_host: the host of the MySQL server. Default is 127.0.0.1.
+- auth_mysql_port: on which port to connect to the MySQL server. Default is 3306.
+- auth_mysql_user: username for connection to the MySQL server. Default is root.
+- auth_mysql_password: password for connection to the MySQL server. Default is empty.
+- auth_mysql_database: name of the database. Required.
+- auth_mysql_table: name of the table, which holds the user record. Default is users.
+- auth_mysql_user_column: name of the username column. Default is username.
+- auth_mysql_password_column: name of the password column. Default is password.
+- auth_mysql_encryption_type: the format of the password field. Should be one of:
+    * none: the password is stored in plaintext in the database
+    * md5: in the database is stored a md5 hash of the password
+    * phpass: a portable php hash of the password is stored. See:
+        http://www.openwall.com/phpass/ for more information.
+    The default is md5.
+    
+== Sample Configuration ==
+
+location / {
+            root   html;
+            index  index.html index.htm;
+            auth_mysql_realm "My Secret Website:";
+            auth_mysql_host "db.acme.com";
+            auth_mysql_user "root";
+            auth_mysql_password "secretsanta";
+            auth_mysql_database "acme_production";
+            auth_mysql_table "acme_users";
+            auth_mysql_password_column "pass";
+            auth_mysql_user_column "user";
+            auth_mysql_encryption_type "phpass";
+        }   
+
+== How it Works/Bugs ==
+
+- Currently nginx_auth_mysql makes/frees a new connection for every request.
+- The query for retrieving the password is always of the form:
+    SELECT `password` FROM `users` WHERE `username` = '<username-from-HTTP-request>'
+so you probably want to add an index on the username column.
+
+== Writing a New Ecnryption Type ==
+
+1. Add an entry in the `ngx_http_auth_mysql_enctypes` array. It has to be a struct
+with two elements:
+    - ngx_str_t id
+    
+        The name under which it should be referenced in the config file
+        
+    - ngx_uint_t (*checker)(ngx_http_request_t *r, ngx_str_t sent_password, ngx_str_t actual_password)
+    
+        A function, which given the request (mostly used for logging and memory allocation through its r->pool),
+    the password sent by the user and the password in the database has to determine whether they match.
+    If they match it should return NGX_OK, if they don't it should return NGX_DECLINED. If other error
+    occures, it should log it and return NGX_ERR.    
+    Currently salts aren't supported, but if there are schemes, which require them it is quite easy.
+    
+Questions/patches may be sent to Nikolay Bachiyski, nikolay@automattic.com
