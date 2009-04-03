@@ -41,6 +41,7 @@ typedef struct {
 	ngx_str_t password_column;
 	ngx_str_t encryption_type_str;
 	ngx_uint_t encryption_type;
+	ngx_str_t allowed_users;
 } ngx_http_auth_mysql_loc_conf_t;
 
 /* Encryption types */
@@ -167,7 +168,14 @@ static ngx_command_t ngx_http_auth_mysql_commands[] = {
 	ngx_conf_set_str_slot,
 	NGX_HTTP_LOC_CONF_OFFSET,
 	offsetof(ngx_http_auth_mysql_loc_conf_t, encryption_type_str),
-	NULL }	
+	NULL },
+	
+	{ ngx_string("auth_mysql_allowed_users"),
+	NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE1,
+	ngx_conf_set_str_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_auth_mysql_loc_conf_t, allowed_users),
+	NULL }
 };
 
 
@@ -245,7 +253,8 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 
     size_t   len;
 	ngx_int_t auth_res;
-	u_char  *uname_buf, *p;
+	ngx_int_t found_in_allowed;
+	u_char  *uname_buf, *p, *allowed_users, *next_username;
 	ngx_str_t actual_password;
 
 	u_char query_buf[NGX_AUTH_MYSQL_MAX_QUERY_LEN];	
@@ -279,9 +288,23 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
     uinfo.password.data = r->headers_in.passwd.data;
     uinfo.password.len  = r->headers_in.passwd.len;
 
-    /* TODO: connect to mysql
-		user: uinfo.username.data
-	*/
+	/* Check if the user is among allowed users */
+	if (ngx_strcmp(alcf->allowed_users.data, "") != 0) {
+		allowed_users = ngx_pstrdup(r->pool, &alcf->allowed_users);
+		found_in_allowed = 0;
+		while ((next_username = (u_char*)strsep((char**)&allowed_users, " \t")) != NULL) {
+			if (ngx_strcmp(next_username, uinfo.username.data) == 0) {
+				found_in_allowed = 1;
+				break;
+			}
+		}
+		if (1 != found_in_allowed) {
+			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+				"auth_mysql: User '%s' isn't among allowed users.", (char*)uinfo.username.data);
+			return ngx_http_auth_mysql_set_realm(r, &alcf->realm);
+		}
+	}
+
 	conn = mysql_init(NULL);
 	if (conn == NULL) {
 		ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
@@ -435,6 +458,7 @@ ngx_http_auth_mysql_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_str_value( conf->user_column, prev->user_column, "username");
 	ngx_conf_merge_str_value( conf->password_column, prev->password_column, "password");
 	ngx_conf_merge_str_value( conf->encryption_type_str, prev->encryption_type_str, "md5");
+	ngx_conf_merge_str_value( conf->allowed_users, prev->allowed_users, "");
 	
 	if (ngx_strcmp(conf->database.data, "") == 0) {
 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
