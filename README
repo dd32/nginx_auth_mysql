@@ -56,6 +56,9 @@ location / {
             auth_mysql_password_column "pass";
             auth_mysql_user_column "user";
             auth_mysql_encryption_type "phpass";
+            # only these two usernames will be accepted
+            auth_mysql_allowed_users "roadrunner coyote";
+
         }   
 
 == How it Works/Bugs ==
