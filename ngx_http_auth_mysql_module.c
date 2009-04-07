@@ -254,7 +254,7 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
     size_t   len;
 	ngx_int_t auth_res;
 	ngx_int_t found_in_allowed;
-	u_char  *uname_buf, *p, *allowed_users, *next_username;
+	u_char  *uname_buf, *p, *next_username;
 	ngx_str_t actual_password;
 
 	u_char query_buf[NGX_AUTH_MYSQL_MAX_QUERY_LEN];	
@@ -290,14 +290,20 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 
 	/* Check if the user is among allowed users */
 	if (ngx_strcmp(alcf->allowed_users.data, "") != 0) {
-		allowed_users = ngx_pstrdup(r->pool, &alcf->allowed_users);
 		found_in_allowed = 0;
-		while ((next_username = (u_char*)strsep((char**)&allowed_users, " \t")) != NULL) {
+		// strdup will allocate only len bytes, and we want one more for \0
+		alcf->allowed_users.len++;
+		char* allowed_users = (char*)ngx_pstrdup(r->pool, &alcf->allowed_users);
+		alcf->allowed_users.len--;
+		allowed_users[alcf->allowed_users.len] = '\0';
+		
+		while ((next_username = (u_char*)strsep(&allowed_users, " \t")) != NULL) {
 			if (ngx_strcmp(next_username, uinfo.username.data) == 0) {
 				found_in_allowed = 1;
 				break;
 			}
 		}
+
 		if (1 != found_in_allowed) {
 			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
 				"auth_mysql: User '%s' isn't among allowed users.", (char*)uinfo.username.data);
@@ -349,6 +355,8 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 		unsigned long *lengths = mysql_fetch_lengths(query_result);
 		ngx_str_t volatile_actual_password = {lengths[0], (u_char*) data[0]};
 		actual_password.len = lengths[0];
+		// strdup will allocate only len bytes, we want an extra one for \0
+		volatile_actual_password.len++;
 		actual_password.data = ngx_pstrdup(r->pool, &volatile_actual_password);
 		actual_password.data[actual_password.len] = '\0';
 		mysql_free_result(query_result);
