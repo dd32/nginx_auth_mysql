@@ -42,6 +42,11 @@ typedef struct {
 	ngx_str_t encryption_type_str;
 	ngx_uint_t encryption_type;
 	ngx_str_t allowed_users;
+	ngx_str_t allowed_groups;
+	ngx_str_t group_table;	
+	ngx_str_t group_column;	
+	ngx_str_t group_conditions;
+	ngx_str_t conditions;
 } ngx_http_auth_mysql_loc_conf_t;
 
 /* Encryption types */
@@ -175,6 +180,41 @@ static ngx_command_t ngx_http_auth_mysql_commands[] = {
 	ngx_conf_set_str_slot,
 	NGX_HTTP_LOC_CONF_OFFSET,
 	offsetof(ngx_http_auth_mysql_loc_conf_t, allowed_users),
+	NULL },
+	
+	{ ngx_string("auth_mysql_allowed_groups"),
+	NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE1,
+	ngx_conf_set_str_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_auth_mysql_loc_conf_t, allowed_groups),
+	NULL },
+	
+	{ ngx_string("auth_mysql_group_table"),
+	NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE1,
+	ngx_conf_set_str_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_auth_mysql_loc_conf_t, group_table),
+	NULL },
+	
+	{ ngx_string("auth_mysql_group_column"),
+	NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE1,
+	ngx_conf_set_str_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_auth_mysql_loc_conf_t, group_column),
+	NULL },
+
+	{ ngx_string("auth_mysql_group_conditions"),
+	NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE1,
+	ngx_conf_set_str_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_auth_mysql_loc_conf_t, group_conditions),
+	NULL },
+
+	{ ngx_string("auth_mysql_conditions"),
+	NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE1,
+	ngx_conf_set_str_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_auth_mysql_loc_conf_t, conditions),
 	NULL }
 };
 
@@ -331,7 +371,20 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 	mysql_real_escape_string(conn, (char*)esc_table, (char*)alcf->table.data, alcf->table.len);
 	mysql_real_escape_string(conn, (char*)esc_user_column, (char*)alcf->user_column.data, alcf->user_column.len);
 	mysql_real_escape_string(conn, (char*)esc_user, (char*)uinfo.username.data, uinfo.username.len);
-
+/*	
+	tables = user_table
+	cond = (user_col = receved_user_name)
+	if allowed_groups {
+		// require -> group_col && group_table
+		if group_table != table
+			tables .= ', '.group_table
+		group_val = split(' ', allowed_groups)
+		cond .= ' AND group_conds'
+		cond .= ' AND group_col IN (group_values)'
+	}
+	if conditions
+		cond .= ' AND '.conditions
+*/
 	p = ngx_snprintf(query_buf, NGX_AUTH_MYSQL_MAX_QUERY_LEN, "SELECT `%s` FROM `%s` WHERE `%s` = '%s' LIMIT 1",
 		esc_pass_column, esc_table, esc_user_column, esc_user);
 	*p = '\0';
@@ -467,6 +520,7 @@ ngx_http_auth_mysql_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_str_value( conf->password_column, prev->password_column, "password");
 	ngx_conf_merge_str_value( conf->encryption_type_str, prev->encryption_type_str, "md5");
 	ngx_conf_merge_str_value( conf->allowed_users, prev->allowed_users, "");
+	ngx_conf_merge_str_value( conf->allowed_groups, prev->allowed_groups, "");
 	
 	if (ngx_strcmp(conf->database.data, "") == 0) {
 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 

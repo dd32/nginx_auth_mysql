@@ -4,7 +4,7 @@ nginx_auth_mysql
 nginx_auth_mysql allows you to do basic authentication against
 a MySQL database.
 
-== Installation ==
+== INSTALLATION ==
 
 To install, compile nginx with the following option:
 
@@ -21,7 +21,7 @@ CORE_INCS="$CORE_INCS /opt/local/include/mysql5/mysql/"
 Note: every time you change the `config` file, you have to run the ./configure
 magic line again.
   
-== Configuration ==
+== CONFIGURATION ==
   
 It is activated by adding several configuration options:
 
@@ -31,9 +31,16 @@ It is activated by adding several configuration options:
 - auth_mysql_user: username for connection to the MySQL server. Default is root.
 - auth_mysql_password: password for connection to the MySQL server. Default is empty.
 - auth_mysql_database: name of the database. Required.
-- auth_mysql_table: name of the table, which holds the user record. Default is users.
+- auth_mysql_table: name of the table, which holds the user record.
+    You can have more than one table separated by comas. Default is users.
 - auth_mysql_user_column: name of the username column. Default is username.
 - auth_mysql_password_column: name of the password column. Default is password.
+- auth_mysql_conditions: Additional SQL conditions. They will be placed after and AND. Default is empty string.
+- auth_mysql_group_table: name of the table, which holds the groups information.
+    You can have more than one table separated by comas. Default is empty.
+- auth_mysql_group_column: name of the group name column. Default is name.
+- auth_mysql_group_conditions: Additional SQL conditions applied only in group queries.
+    They will be placed after an AND. Default is empty string.
 - auth_mysql_encryption_type: the format of the password field. Should be one of:
     * none: the password is stored in plaintext in the database;
     * md5: in the database is stored a md5 hash of the password;
@@ -41,8 +48,10 @@ It is activated by adding several configuration options:
         http://www.openwall.com/phpass/ for more information.
     The default is md5.
 - auth_mysql_allowed_users: whitespace delimited list of allowed users.
+- auth_mysql_allowed_groups: whitespace delimited list of allowed groups.
+    If both allowed_users and allowed_groups are defined, either of them has to satisfied.
     
-== Sample Configuration ==
+== SAMPLE CONFIGURATION ==
 
 location / {
             root   html;
@@ -58,19 +67,49 @@ location / {
             auth_mysql_encryption_type "phpass";
             # only these two usernames will be accepted
             auth_mysql_allowed_users "roadrunner coyote";
+            # either the usernames above will be acceped
+            # or any user from the groups below
+            auth_mysql_allowed_groups "omg-bbq-admins";
 
         }   
 
-== How it Works/Bugs ==
+# groups example
+location / {
+            root   html;
+            index  index.html index.htm;
+            auth_mysql_realm "My Secret Website with Groups:";
+            auth_mysql_database "acme_production";
+            auth_mysql_group_table "groups, users_groups"
+            auth_mysql_group_column "groups.name"
+            auth_mysql_group_conditions "users.id = users_groups.user_id AND users_groups.group_id = groups.id"
+            auth_mysql_allowed_users "roadrunner coyote";
+            # either the usernames above will be acceped
+            # or any user from the groups below
+            auth_mysql_allowed_groups "omg-bbq-admins";
+        }   
 
-- Currently nginx_auth_mysql makes/frees a new connection for every request.
-- The query for retrieving the password is always of the form:
-    SELECT `password` FROM `users` WHERE `username` = '<username-from-HTTP-request>'
-so you probably want to add an index on the username column.
 
-== Writing a New Ecnryption Type ==
+== HOW IT WORKS ==
 
-1. Add an entry in the `ngx_http_auth_mysql_enctypes` array. It has to be a struct
+- The query for retrieving the password is in the form:
+    SELECT
+        `password`
+    FROM user_table [, group_table]
+    WHERE
+        `username` = '<username-from-HTTP-request>'
+        [AND conditions]
+        [AND group_conditions]
+        [AND group_column IN (<groups-from-allowed-users-clause>)]
+
+You should add an index on your username column.
+
+== BUGS ==
+
+msp_users.ID = msp_bp_groups_members.user_id
+
+== WRITING A NEW ECNRYPTION TYPE ==
+
+Add an entry in the `ngx_http_auth_mysql_enctypes` array. It has to be a struct
 with two elements:
     - ngx_str_t id
     
