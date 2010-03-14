@@ -35,9 +35,10 @@ It is activated by adding several configuration options:
     You can have more than one table separated by comas. Default is users.
 - auth_mysql_user_column: name of the username column. Default is username.
 - auth_mysql_password_column: name of the password column. Default is password.
-- auth_mysql_conditions: Additional SQL conditions. They will be placed after and AND. Default is empty string.
+- auth_mysql_conditions: Additional SQL conditions. They will be placed after and AND.
+    Default is empty string.
 - auth_mysql_group_table: name of the table, which holds the groups information.
-    You can have more than one table separated by comas. Default is empty.
+    You can have more than one table separated by comas. Default is the users table.
 - auth_mysql_group_column: name of the group name column. Default is name.
 - auth_mysql_group_conditions: Additional SQL conditions applied only in group queries.
     They will be placed after an AND. Default is empty string.

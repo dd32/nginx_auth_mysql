@@ -14,9 +14,6 @@
 
 #include "crypt_private.h"
 
-#define NGX_AUTH_MYSQL_MAX_QUERY_LEN 1000
-#define NGX_AUTH_MYSQL_MAX_FIELD_LEN 256
-
 /* Module context data */
 typedef struct {
     ngx_str_t  passwd;
@@ -78,7 +75,12 @@ static char *ngx_http_auth_mysql_merge_loc_conf(ngx_conf_t *cf,
 
 static ngx_int_t ngx_http_auth_mysql_init(ngx_conf_t *cf);
 
+static u_char *ngx_http_auth_mysql_uchar(ngx_pool_t *pool, ngx_str_t *str);
+
 static char *ngx_http_auth_mysql(ngx_conf_t *cf, void *post, void *data);
+
+static u_char * ngx_http_auth_mysql_append2(ngx_pool_t *pool, u_char *base, u_char *append, u_char *append2);
+static u_char * ngx_http_auth_mysql_append3(ngx_pool_t *pool, u_char *base, u_char *append, u_char *append2, u_char *append3);
 
 static ngx_conf_post_handler_pt  ngx_http_auth_mysql_p = ngx_http_auth_mysql;
 
@@ -293,15 +295,16 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 
     size_t   len;
 	ngx_int_t auth_res;
-	ngx_int_t found_in_allowed;
+	ngx_int_t found_in_allowed = 0;
 	u_char  *uname_buf, *p, *next_username;
 	ngx_str_t actual_password;
 
-	u_char query_buf[NGX_AUTH_MYSQL_MAX_QUERY_LEN];	
-	u_char esc_table[NGX_AUTH_MYSQL_MAX_FIELD_LEN];
-	u_char esc_user[NGX_AUTH_MYSQL_MAX_FIELD_LEN];
-	u_char esc_user_column[NGX_AUTH_MYSQL_MAX_FIELD_LEN];
-	u_char esc_pass_column[NGX_AUTH_MYSQL_MAX_FIELD_LEN];
+	u_char *query_buf;
+	u_char *table;
+	u_char *user_column;	
+	u_char *password_column;
+	u_char *conditions;	
+	u_char *esc_user;
 
 	MYSQL *conn, *mysql_result;
 	MYSQL_RES *query_result;
@@ -330,24 +333,13 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 
 	/* Check if the user is among allowed users */
 	if (ngx_strcmp(alcf->allowed_users.data, "") != 0) {
-		found_in_allowed = 0;
-		// strdup will allocate only len bytes, and we want one more for \0
-		alcf->allowed_users.len++;
-		char* allowed_users = (char*)ngx_pstrdup(r->pool, &alcf->allowed_users);
-		alcf->allowed_users.len--;
-		allowed_users[alcf->allowed_users.len] = '\0';
-		
+		found_in_allowed = 0;		
+		char* allowed_users = (char*)ngx_http_auth_mysql_uchar(r->pool, &alcf->allowed_users);
 		while ((next_username = (u_char*)strsep(&allowed_users, " \t")) != NULL) {
 			if (ngx_strcmp(next_username, uinfo.username.data) == 0) {
 				found_in_allowed = 1;
 				break;
 			}
-		}
-
-		if (1 != found_in_allowed) {
-			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-				"auth_mysql: User '%s' isn't among allowed users.", (char*)uinfo.username.data);
-			return ngx_http_auth_mysql_set_realm(r, &alcf->realm);
 		}
 	}
 
@@ -366,27 +358,74 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 		mysql_close(conn);
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
-
-	mysql_real_escape_string(conn, (char*)esc_pass_column, (char*)alcf->password_column.data, alcf->password_column.len);
-	mysql_real_escape_string(conn, (char*)esc_table, (char*)alcf->table.data, alcf->table.len);
-	mysql_real_escape_string(conn, (char*)esc_user_column, (char*)alcf->user_column.data, alcf->user_column.len);
+	
+	user_column = ngx_http_auth_mysql_uchar(r->pool, &alcf->user_column);
+	
+	esc_user = ngx_pnalloc(r->pool, 2*(uinfo.username.len + 1));
 	mysql_real_escape_string(conn, (char*)esc_user, (char*)uinfo.username.data, uinfo.username.len);
-/*	
-	tables = user_table
-	cond = (user_col = receved_user_name)
-	if allowed_groups {
-		// require -> group_col && group_table
-		if group_table != table
-			tables .= ', '.group_table
-		group_val = split(' ', allowed_groups)
-		cond .= ' AND group_conds'
-		cond .= ' AND group_col IN (group_values)'
+	
+	conditions = ngx_pnalloc(r->pool, ngx_strlen(user_column) + ngx_strlen(esc_user) + 7);
+	p = (u_char*)ngx_sprintf(conditions, "%s = '%s'", (char*)user_column, esc_user);
+	*p = '\0';
+	
+	if (ngx_strcmp(alcf->conditions.data, "") != 0) {
+		u_char* username_condition = conditions;
+		conditions = ngx_http_auth_mysql_append2(r->pool, username_condition, (u_char*)" AND ", ngx_http_auth_mysql_uchar(r->pool, &alcf->conditions));
+		ngx_pfree(r->pool, username_condition);
 	}
-	if conditions
-		cond .= ' AND '.conditions
-*/
-	p = ngx_snprintf(query_buf, NGX_AUTH_MYSQL_MAX_QUERY_LEN, "SELECT `%s` FROM `%s` WHERE `%s` = '%s' LIMIT 1",
-		esc_pass_column, esc_table, esc_user_column, esc_user);
+	
+	table = ngx_http_auth_mysql_uchar(r->pool, &alcf->table);
+
+	if (!found_in_allowed && ngx_strcmp(alcf->allowed_groups.data, "") != 0) {
+		if (ngx_strcmp(alcf->group_table.data, "") != 0) {
+			u_char* user_table = table;
+			table = ngx_http_auth_mysql_append2(r->pool, user_table, (u_char*)", ", ngx_http_auth_mysql_uchar(r->pool, &alcf->group_table));
+			ngx_pfree(r->pool, user_table);
+			
+			u_char* current_conditions = conditions;
+			conditions = ngx_http_auth_mysql_append2(r->pool, current_conditions, (u_char*)" AND ", ngx_http_auth_mysql_uchar(r->pool, &alcf->group_conditions));
+			ngx_pfree(r->pool, current_conditions);
+			
+			// TODO: AND group_col IN (group_values)
+			char* allowed_groups = (char*)ngx_http_auth_mysql_uchar(r->pool, &alcf->allowed_groups);
+			
+			u_char* next_group;
+			
+			current_conditions = conditions;
+			conditions = ngx_http_auth_mysql_append3(r->pool, current_conditions,
+				(u_char*)" AND ",
+				ngx_http_auth_mysql_uchar(r->pool, &alcf->group_column),
+				(u_char*)" IN (");
+			ngx_pfree(r->pool, current_conditions);	
+			
+			u_char* in_group = (u_char*)"";
+			while ((next_group = (u_char*)strsep(&allowed_groups, " \t")) != NULL) {
+				u_char* current_in_group = in_group;
+				u_char* esc_group = ngx_pnalloc(r->pool, 2*(ngx_strlen(next_group) + 1));
+				mysql_real_escape_string(conn, (char*)esc_group, (char*)next_group, ngx_strlen(next_group));
+
+				in_group = ngx_http_auth_mysql_append3(r->pool, current_in_group,
+					(u_char*)"'",
+					esc_group,
+					(u_char*)"',");
+				if (ngx_strcmp(current_in_group, "") != 0) {
+					ngx_pfree(r->pool, current_in_group);
+				}
+			}
+			if (ngx_strcmp(in_group, "") != 0) {
+				// remove trailing coma
+				in_group[ngx_strlen(in_group)-1] = '\0';
+			}			
+			current_conditions = conditions;
+			conditions = ngx_http_auth_mysql_append2(r->pool, current_conditions, in_group, (u_char*)")");
+			ngx_pfree(r->pool, current_conditions);
+		} 		
+	}
+
+	password_column = ngx_http_auth_mysql_uchar(r->pool, &alcf->password_column);
+	query_buf = ngx_pnalloc(r->pool, ngx_strlen(password_column) + ngx_strlen(table) + ngx_strlen(conditions) + 33);
+	p = ngx_sprintf(query_buf, "SELECT %s FROM %s WHERE %s LIMIT 1",
+		password_column, table, conditions);
 	*p = '\0';
 	
   	if (mysql_query(conn, (char*)query_buf) != 0) {
@@ -408,14 +447,11 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 		unsigned long *lengths = mysql_fetch_lengths(query_result);
 		ngx_str_t volatile_actual_password = {lengths[0], (u_char*) data[0]};
 		actual_password.len = lengths[0];
-		// strdup will allocate only len bytes, we want an extra one for \0
-		volatile_actual_password.len++;
-		actual_password.data = ngx_pstrdup(r->pool, &volatile_actual_password);
-		actual_password.data[actual_password.len] = '\0';
+		actual_password.data = ngx_http_auth_mysql_uchar(r->pool, &volatile_actual_password);
 		mysql_free_result(query_result);
 	} else {
 		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-			"auth_mysql: User '%s' doesn't exist.", (char*)uinfo.username.data);
+			"auth_mysql: User '%s' doesn't exist or is in neither allowed users nor allowed groups", (char*)uinfo.username.data);
 		mysql_free_result(query_result);
 		mysql_close(conn);
 		return ngx_http_auth_mysql_set_realm(r, &alcf->realm);		
@@ -521,6 +557,9 @@ ngx_http_auth_mysql_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_str_value( conf->encryption_type_str, prev->encryption_type_str, "md5");
 	ngx_conf_merge_str_value( conf->allowed_users, prev->allowed_users, "");
 	ngx_conf_merge_str_value( conf->allowed_groups, prev->allowed_groups, "");
+	ngx_conf_merge_str_value( conf->group_column, prev->group_column, "name");
+	ngx_conf_merge_str_value( conf->group_conditions, prev->group_conditions, "");
+	ngx_conf_merge_str_value( conf->conditions, prev->conditions, "");
 	
 	if (ngx_strcmp(conf->database.data, "") == 0) {
 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
@@ -592,4 +631,41 @@ ngx_http_auth_mysql(ngx_conf_t *cf, void *post, void *data)
     realm->data = basic;
 
     return NGX_CONF_OK;
+}
+
+static u_char *
+ngx_http_auth_mysql_uchar(ngx_pool_t *pool, ngx_str_t *str) {
+	// strdup will allocate only len bytes, we want an extra one for \0
+	str->len++;
+	u_char *result = ngx_pstrdup(pool, str);
+	if (result == NULL) {
+		return NULL;
+	}
+	str->len--;
+	result[str->len] = '\0';
+	return result;
+}
+
+/* TODO: variable argument list */
+static u_char *
+ngx_http_auth_mysql_append2(ngx_pool_t *pool, u_char *base, u_char *append, u_char *append2) {
+	u_char* current = base;
+	base = ngx_pnalloc(pool, ngx_strlen(current) + ngx_strlen(append) + ngx_strlen(append2) + 1);
+	base[0] = '\0';
+	strcat((char*)base, (char*)current);
+	strcat((char*)base, (char*)append);
+	strcat((char*)base, (char*)append2);
+	return base;
+}
+
+static u_char *
+ngx_http_auth_mysql_append3(ngx_pool_t *pool, u_char *base, u_char *append, u_char *append2, u_char *append3) {
+	u_char* current = base;
+	base = ngx_pnalloc(pool, ngx_strlen(current) + ngx_strlen(append) + ngx_strlen(append2) + ngx_strlen(append3) + 1);
+	base[0] = '\0';
+	strcat((char*)base, (char*)current);
+	strcat((char*)base, (char*)append);
+	strcat((char*)base, (char*)append2);
+	strcat((char*)base, (char*)append3);
+	return base;
 }
