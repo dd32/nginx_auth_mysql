@@ -669,3 +669,5 @@ ngx_http_auth_mysql_append3(ngx_pool_t *pool, u_char *base, u_char *append, u_ch
 	strcat((char*)base, (char*)append3);
 	return base;
 }
+
+/* Not having a newline at the end of file chokes some compilers. Please always leave one. */
