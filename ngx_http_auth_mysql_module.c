@@ -296,6 +296,7 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
     size_t   len;
 	ngx_int_t auth_res;
 	ngx_int_t found_in_allowed = 0;
+	ngx_int_t using_groups = 0;
 	u_char  *uname_buf, *p, *next_username;
 	ngx_str_t actual_password;
 
@@ -378,6 +379,7 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 
 	if (!found_in_allowed && ngx_strcmp(alcf->allowed_groups.data, "") != 0) {
 		if (ngx_strcmp(alcf->group_table.data, "") != 0) {
+			using_groups = 1;
 			u_char* user_table = table;
 			table = ngx_http_auth_mysql_append2(r->pool, user_table, (u_char*)", ", ngx_http_auth_mysql_uchar(r->pool, &alcf->group_table));
 			ngx_pfree(r->pool, user_table);
@@ -442,7 +444,9 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 		mysql_close(conn);
     	return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
-	if (mysql_num_rows(query_result) >= 1) {
+	if (
+		( ngx_strcmp(alcf->allowed_users.data, "") == 0 || found_in_allowed || using_groups ) && mysql_num_rows(query_result) >= 1
+	) {
 		MYSQL_ROW data = mysql_fetch_row(query_result);
 		unsigned long *lengths = mysql_fetch_lengths(query_result);
 		ngx_str_t volatile_actual_password = {lengths[0], (u_char*) data[0]};
