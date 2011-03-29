@@ -562,6 +562,7 @@ ngx_http_auth_mysql_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_str_value( conf->allowed_users, prev->allowed_users, "");
 	ngx_conf_merge_str_value( conf->allowed_groups, prev->allowed_groups, "");
 	ngx_conf_merge_str_value( conf->group_column, prev->group_column, "name");
+	ngx_conf_merge_str_value( conf->group_table, prev->group_table, "");
 	ngx_conf_merge_str_value( conf->group_conditions, prev->group_conditions, "");
 	ngx_conf_merge_str_value( conf->conditions, prev->conditions, "");
 	
