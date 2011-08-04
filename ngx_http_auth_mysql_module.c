@@ -497,7 +497,8 @@ ngx_http_auth_mysql_check_md5(ngx_http_request_t *r, ngx_str_t sent_password, ng
 	return (ngx_strcmp(actual_password.data, md5_str) == 0)? NGX_OK : NGX_DECLINED;
 }
 
-static void phpass_addslashes(u_char *src, u_char *dest) {
+static void 
+phpass_addslashes(u_char *src, u_char *dest) {
 #ifdef PHPASS_ADDSLASHES
 	ngx_uint_t length;
 	u_char *source, *end, *target;
