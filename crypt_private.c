@@ -20,6 +20,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <ngx_md5.h>
+#include "crypt_private.h"
 
 #ifdef TEST
 #include <stdio.h>

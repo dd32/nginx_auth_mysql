@@ -47,6 +47,8 @@ It is activated by adding several configuration options:
     * md5: in the database is stored a md5 hash of the password;
     * phpass: a portable php hash of the password is stored. See:
         http://www.openwall.com/phpass/ for more information.
+    * bcrypt: a password hashing method based on the Blowfish block cipher. See:
+        https://www.openwall.com/crypt/ for more information.
     The default is md5.
 - auth_mysql_allowed_users: whitespace delimited list of allowed users.
 - auth_mysql_allowed_groups: whitespace delimited list of allowed groups.

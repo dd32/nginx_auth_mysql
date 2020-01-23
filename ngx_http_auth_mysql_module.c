@@ -13,8 +13,13 @@
 #include <mysql.h>
 
 #include "crypt_private.h"
+#include "crypt_blowfish.h"
 
 #define PHPASS_ADDSLASHES 1
+
+#ifndef BCRYPT_HASH_LEN
+#define BCRYPT_HASH_LEN 60
+#endif
 
 /* Module context data */
 typedef struct {
@@ -67,6 +72,8 @@ static ngx_uint_t ngx_http_auth_mysql_check_md5(ngx_http_request_t *r, ngx_str_t
 
 static ngx_uint_t ngx_http_auth_mysql_check_phpass(ngx_http_request_t *r, ngx_str_t sent_password, ngx_str_t actual_password);
 
+static ngx_uint_t ngx_http_auth_mysql_check_bcrypt(ngx_http_request_t *r, ngx_str_t sent_password, ngx_str_t actual_password);
+
 static ngx_int_t ngx_http_auth_mysql_set_realm(ngx_http_request_t *r,
     ngx_str_t *realm);
 
@@ -84,6 +91,10 @@ static char *ngx_http_auth_mysql(ngx_conf_t *cf, void *post, void *data);
 static u_char * ngx_http_auth_mysql_append2(ngx_pool_t *pool, u_char *base, u_char *append, u_char *append2);
 static u_char * ngx_http_auth_mysql_append3(ngx_pool_t *pool, u_char *base, u_char *append, u_char *append2, u_char *append3);
 
+#ifdef PHPASS_ADDSLASHES
+static void phpass_addslashes(u_char *src, u_char *dest);
+#endif
+
 static ngx_conf_post_handler_pt  ngx_http_auth_mysql_p = ngx_http_auth_mysql;
 
 static ngx_http_auth_mysql_enctype_t ngx_http_auth_mysql_enctypes[] = {
@@ -98,6 +109,10 @@ static ngx_http_auth_mysql_enctype_t ngx_http_auth_mysql_enctypes[] = {
 	{
 		ngx_string("phpass"),
 		ngx_http_auth_mysql_check_phpass
+	},
+	{
+		ngx_string("bcrypt"),
+		ngx_http_auth_mysql_check_bcrypt
 	}
 };
 
@@ -464,8 +479,24 @@ ngx_http_auth_mysql_authenticate(ngx_http_request_t *r,
 	}
 	mysql_close(conn);
 
+	ngx_str_t escaped_sent_pw;
+#ifdef PHPASS_ADDSLASHES
+	escaped_sent_pw.data = ngx_palloc(r->pool, 2 * uinfo.password.len + 1);
+
+	if (escaped_sent_pw.data == NULL) {
+		ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
+				"auth_mysql: ngx_http_auth_mysql_authenticate: couldn't allocate memory");
+	}
+
+	phpass_addslashes(uinfo.password.data, escaped_sent_pw.data);
+
+	escaped_sent_pw.len = ngx_strlen(escaped_sent_pw.data);
+#else
+	escaped_sent_pw = uinfo.password;
+#endif
+
 	auth_res = NGX_OK;
-	auth_res = ngx_http_auth_mysql_enctypes[alcf->encryption_type].checker(r, uinfo.password, actual_password);
+	auth_res = ngx_http_auth_mysql_enctypes[alcf->encryption_type].checker(r, escaped_sent_pw, actual_password);
 	if (NGX_DECLINED == auth_res) {
 		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
 			"auth_mysql: Bad authentication for user '%s'.", (char*)uinfo.username.data);
@@ -497,9 +528,9 @@ ngx_http_auth_mysql_check_md5(ngx_http_request_t *r, ngx_str_t sent_password, ng
 	return (ngx_strcmp(actual_password.data, md5_str) == 0)? NGX_OK : NGX_DECLINED;
 }
 
-static void 
-phpass_addslashes(u_char *src, u_char *dest) {
 #ifdef PHPASS_ADDSLASHES
+static void
+phpass_addslashes(u_char *src, u_char *dest) {
 	ngx_uint_t length;
 	u_char *source, *end, *target;
 
@@ -514,6 +545,7 @@ phpass_addslashes(u_char *src, u_char *dest) {
 			case '\"':
 			case '\\':
 				*target++ = '\\';
+				// fall-through
 			default:
 				*target++ = *source;
 				break;
@@ -522,25 +554,37 @@ phpass_addslashes(u_char *src, u_char *dest) {
 	}
 
 	*target = '\0';
-#endif
 }
+#endif
 
 static ngx_uint_t
 ngx_http_auth_mysql_check_phpass(ngx_http_request_t *r, ngx_str_t sent_password, ngx_str_t actual_password) {
-	ngx_str_t escaped_sent_pw;
-	escaped_sent_pw.data = ngx_palloc(r->pool, 2 * sent_password.len + 1);
+	if (ngx_strcmp(actual_password.data, crypt_private(r, sent_password.data, actual_password.data))) {
+		return ngx_http_auth_mysql_check_md5(r, sent_password, actual_password);
+	}
+	return NGX_OK;
+}
 
-	if (escaped_sent_pw.data == NULL) {
+static ngx_uint_t
+ngx_http_auth_mysql_check_bcrypt(ngx_http_request_t *r, ngx_str_t sent_password, ngx_str_t actual_password) {
+	char output[BCRYPT_HASH_LEN+1];
+	char *null_terminated_sent_pass = ngx_palloc(r->pool, sent_password.len+1);
+	char *null_terminated_actual_pass = ngx_palloc(r->pool, actual_password.len+1);
+
+	if (!null_terminated_sent_pass || !null_terminated_actual_pass) {
 		ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
-				"auth_mysql: ngx_http_auth_mysql_check_phpass: couldn't allocate memory");
+				"auth_mysql: ngx_http_auth_mysql_check_bcrypt: couldn't allocate memory");
 	}
 
-	phpass_addslashes(sent_password.data, escaped_sent_pw.data);
-	escaped_sent_pw.len = ngx_strlen(escaped_sent_pw.data);
+	ngx_cpystrn((u_char *) null_terminated_sent_pass, sent_password.data, sent_password.len+1);
+	ngx_cpystrn((u_char *) null_terminated_actual_pass, actual_password.data, actual_password.len+1);
 
-	if (ngx_strcmp(actual_password.data, crypt_private(r, escaped_sent_pw.data, actual_password.data))) {
-		return ngx_http_auth_mysql_check_md5(r, escaped_sent_pw, actual_password);
+	char *hashed_sent_pass = _crypt_blowfish_rn(null_terminated_sent_pass,
+		null_terminated_actual_pass, output, BCRYPT_HASH_LEN+1);
+	if (!hashed_sent_pass || ngx_strcmp(actual_password.data, hashed_sent_pass)) {
+		return ngx_http_auth_mysql_check_phpass(r, sent_password, actual_password);
 	}
+
 	return NGX_OK;
 }
 
